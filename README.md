@@ -1,2 +1,2 @@
-# dj-pacman
+# datajoint
 DataJoint code
