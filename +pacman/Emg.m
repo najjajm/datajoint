@@ -96,52 +96,6 @@ classdef Emg < dj.Imported
         end
     end
     methods
-        function key = fetchdata(self,varargin)
-            P = inputParser;
-            addParameter(P, 'session_date', [], @(x) isempty(x) || ischar(x))
-            addParameter(P, 'targ_id', [], @(x) isempty(x) || isscalar(x))
-            addParameter(P, 'stim_id', [], @(x) isempty(x) || isscalar(x))
-            addParameter(P, 'emg_channel', [], @(x) isempty(x) || isnumeric(x))
-            addParameter(P, 'trial_index', [], @(x) isempty(x) || isscalar(x))
-            addParameter(P, 'filtOrd', 2, @isnumeric)
-            addParameter(P, 'filtCut', 500, @isnumeric)
-            addParameter(P, 'filtType', 'high', @(x) ischar(x) && ismember(x,{'low','high','bandpass'}))
-            parse(P,varargin{:})
-            
-            % restrict data
-            opt = P.Results;
-            fn = fieldnames(opt);
-            opt = rmfield(opt, fn(~cellfun(@(s) contains(s,'_'),fn)|structfun(@isempty,opt)));
-            
-            % get data keys
-            key = fetch(self & ((pacman.GoodTrials * pacman.TaskTrials) & opt),'*');
-            
-            emgRel = pacman.ContinuousRecording * pacman.EmgChannels * pacman.SyncChannel;
-            for ii = 1:length(key)
-                
-                % fetch alignment indices
-                alignIdx = fetch1(pacman.Sync & key(ii),'continuous_alignment');
-                
-                % load NSx file
-                [filePath,fileName,emgChan,timeStamp] = fetch1(emgRel & key(ii),...
-                    'continuous_file_path','continuous_file_name','emg_channel_numbers','time_stamp');
-                emgChan = str2num(emgChan);
-                nsx = openNSx([filePath,fileName],['c:' num2str(emgChan(key(ii).emg_channel))],['t:' int2str(alignIdx(1)) ':' int2str(alignIdx(end))]);
-                
-                % remove leading time stamp
-                nsx.Data(:,1:timeStamp) = [];
-                
-                % high pass filter 500 Hz
-                [b,a] = butter(P.Results.filtOrd, P.Results.filtCut/(nsx.MetaTags.SamplingFreq/2), 'high');
-                
-                % filter data
-                dataClass = class(nsx.Data);
-                y = filtfilt(b,a,double(nsx.Data));
-                
-                % append data to key
-                key(ii).emg_data = eval(sprintf('%s(y);',dataClass));
-            end            
-        end
         function plot(self,sessionDate,varargin)
             validindices = @(x) iscell(x) &&...
                 (strcmp(x{1},'all') || isnumeric(x{1})) &&...

@@ -1,68 +1,46 @@
 %{
   # behavioral quality metrics
-  -> pacman.TaskTrials
-  -> pacman.Sync
-  -> pacman.SessionBlock
+  -> pacman.Force
   ---
-  max_err_target : decimal(6,4) # maximum (over time) absolute normalized error relative to the target force
+  max_err_target : decimal(6,4) # maximum (over time) absolute error, normalized by the range of the target force
   max_err_mean : decimal(6,4) # maximum (over time) absolute z-scored error
   mah_dist_target : decimal(6,4) # Mahalanobis distance relative to the target force
   mah_dist_mean : decimal(6,4) # Mahalanobis distance relative to the trial average
 %}
 
 classdef BehaviorQuality < dj.Computed
-    properties(Dependent)
-        keySource
-    end
     methods(Access=protected)
         function makeTuples(self, key)
             
-            % fetch save tag keys for this block
-            blockKeys = saveTagStr2Key(pacman.SessionBlock,...
-                fetch1(pacman.SessionBlock & key,'save_tag_set'));
-
-            % append block key data to save tag keys
-            for ii = 1:length(blockKeys)
-                keyFields = fieldnames(fetch(pacman.SessionBlock & key));
-                for jj = 1:length(keyFields)
-                    blockKeys(ii).(keyFields{jj}) = key.(keyFields{jj});
-                end
-            end
+            N_FEAT = 3;
             
-            % fetch key for this target
-            targKey = fetch(pacman.TaskConditions & (pacman.TaskTrials & key));
+            % condition key
+            condKey = fetch(pacman.TaskConditions & (pacman.TaskTrials & key));
             
             % make target force
             FsSg = fetch1(pacman.SpeedgoatRecording & key,'speedgoat_sample_rate');
-            [~,y] = maketarget(pacman.TaskConditions & targKey, FsSg);
+            [~,y] = maketarget(pacman.TaskConditions & condKey, FsSg);
             y = y';
             
             % fetch all trial forces and trial numbers for this block
-            rel = pacman.TaskTrials & pacman.Sync & pacman.SessionBlock & blockKeys & targKey;
-            [X,trialKeys] = convertforce(rel);
-            
-            if length(trialKeys) < 3
-                for ii = 1:length(trialKeys)
-                    key.trial_number = trialKeys(ii).trial_number;
-                    key.max_err_target = 0;
-                    key.max_err_mean = 0;
-                    key.mah_dist_target = 0;
-                    key.mah_dist_mean = 0;
-                    self.insert(key);
-                end
-            else
+            [X,trialNo] = fetchn(pacman.Force & (pacman.TaskTrials & condKey),'force_filt','trial_number');
+            if iscell(X)
                 X = cell2mat(X)';
-                
-                % compute absolute error relative to the target
-                maxErr = zeros(size(trialKeys));
-                for ii = 1:length(maxErr)
-                    maxErr(ii) = max(abs(X(:,ii)-y))/max(2,range(y));
-                end
-                
-                % compute absolute z-scored error
-                errZScore = max(abs(X-mean(X,2))./std(X,[],2),[],1);
-                
-                % compute Mahalanobis distance relative to target
+            end
+            nTrial = length(trialNo);
+            
+            % max absolute error relative to the target range
+            maxErr = max(abs(X-y)/max(2,range(y)),[],1);
+            
+            % absolute z-scored error
+            sd = std(X,[],2);
+            sd(sd==0) = 1;
+            errZScore = max(abs(X-mean(X,2))./sd,[],1);
+            
+            % Mahalanobis distance relative to target
+            if nTrial <= N_FEAT
+                dMahTarg = zeros(size(trialNo));
+            else
                 Z = X-y;
                 [~,pcs] = pca(Z);
                 Zp = pcs(:,1:3)'*Z;
@@ -72,8 +50,12 @@ classdef BehaviorQuality < dj.Computed
                 for ii = 1:length(dMahTarg)
                     dMahTarg(ii) = sqrt(Zpc(:,ii)'*Sinv*Zpc(:,ii));
                 end
-                
-                % compute Mahalanobis distance relative to trial average
+            end
+            
+            % compute Mahalanobis distance relative to trial average
+            if nTrial <= N_FEAT
+                dMahMean = zeros(size(trialNo));
+            else
                 Z = X-mean(X,2);
                 [~,pcs] = pca(Z);
                 Zp = pcs(:,1:3)'*Z;
@@ -83,39 +65,20 @@ classdef BehaviorQuality < dj.Computed
                 for ii = 1:length(dMahMean)
                     dMahMean(ii) = sqrt(Zpc(:,ii)'*Sinv*Zpc(:,ii));
                 end
-                
-                % save results and insert
-                for ii = 1:length(trialKeys)
-                    key.trial_number = trialKeys(ii).trial_number;
-                    key.max_err_target = maxErr(ii);
-                    key.max_err_mean = errZScore(ii);
-                    key.mah_dist_target = dMahTarg(ii);
-                    key.mah_dist_mean = dMahMean(ii);
-                    self.insert(key);
-                end
+            end
+            
+            % save results and insert
+            for ii = 1:nTrial
+                key.trial_number = trialNo(ii);
+                key.max_err_target = maxErr(ii);
+                key.max_err_mean = errZScore(ii);
+                key.mah_dist_target = dMahTarg(ii);
+                key.mah_dist_mean = dMahMean(ii);
+                self.insert(key);
             end
         end
     end
     methods
-        % restrict force trials that belong to defined session blocks
-        function source = get.keySource(self)
-            blockKeys = fetch(pacman.SessionBlock);
-            sourceKeys = cell(size(blockKeys));
-            for ii = 1:length(blockKeys)
-                % add save tag keys
-                sourceKeys{ii} = saveTagStr2Key(pacman.SessionBlock,...
-                    fetch1(pacman.SessionBlock & blockKeys(ii),'save_tag_set'));
-                % copy block key data to save tag keys
-                blockFields = fieldnames(blockKeys(ii));
-                for jj = 1:length(sourceKeys{ii})
-                    for kk = 1:length(blockFields)
-                        sourceKeys{ii}(jj).(blockFields{kk}) = blockKeys(ii).(blockFields{kk});
-                    end
-                end
-            end
-            sourceKeys = cat(1,sourceKeys{:});
-            source = pacman.TaskTrials * pacman.Sync * pacman.SessionBlock & sourceKeys;
-        end
         function ploterrdist(self)
             % get secondary attributes
             keys = fetch(self);

@@ -1,5 +1,6 @@
 %{
   # aligned force data
+  -> pacman.TaskTrials
   -> pacman.Sync
   ---
   force_raw = NULL : longblob # aligned raw force data
@@ -10,28 +11,40 @@ classdef Force < dj.Computed
     methods(Access=protected)
         function makeTuples(self, key)
             
+            rel = pacman.TaskTrials * pacman.Sync & key;
+            
+            % gain settings on FUTEK amplifier
+            MAX_FORCE_POUNDS = 5;
+            MAX_FORCE_VOLTS = 5.095;
+            
+            % unit conversion
+            NEWTONS_PER_POUND = 4.44822;
+            
+            % conversion function (Volts to Newtons)
+            frcV2N = @(frc,frcMax,frcOff) frcMax*(((MAX_FORCE_POUNDS*NEWTONS_PER_POUND)/frcMax...
+                * (frc/MAX_FORCE_VOLTS)) - frcOff);
+            
             % assign aligned raw force to key
-            [key.force_filt,~,key.force_raw] = convertforce(pacman.TaskTrials & key);
+            [alignIdx, frcRaw] = fetch1(rel,'speedgoat_alignment','force_raw_online');
+            frcRaw = frcRaw(alignIdx);
             
-%             % fetch block ID
-%             blockRel = pacman.SessionBlock & key;
-%             if count(blockRel) == 1
-%                 key.block_id = fetch1(blockRel, 'block_id');
-%             else
-%                 saveTag = fetch1(pacman.TaskTrials & key, 'save_tag');
-%                 saveTagKey = fetch(blockRel,'*');
-%                 key.block_id = saveTagKey(arrayfun(@(stk) ismember(saveTag,str2num(stk.save_tag_set)), saveTagKey)).block_id;
-%             end
+            % convert raw force to Newtons
+            [forceMax,forceOffset] = fetch1(pacman.TaskConditions & rel,'force_max','force_offset');
+            frcRaw = frcV2N(frcRaw,forceMax,forceOffset);
             
-            % save results and insert
+            % filter force
+            FsSg = fetch1(pacman.SpeedgoatRecording & key, 'speedgoat_sample_rate');
+            frcFilt = smooth1D(frcRaw,FsSg,'gau','sd',25e-3);
+            
+            % assign forces to key
+            key.force_raw = frcRaw;
+            key.force_filt = frcFilt;
             self.insert(key);
         end
     end
     methods
         function plot(self,varargin)
             P = inputParser;
-            addParameter(P, 'cond', [], @(x) isempty(x) || isnumeric(x))
-            addParameter(P, 'trials', true, @islogical)
             addParameter(P, 'mean', true, @islogical)
             addParameter(P, 'sem', false, @islogical)
             addParameter(P, 'target', false, @islogical)
@@ -40,9 +53,9 @@ classdef Force < dj.Computed
             addParameter(P, 'yInt', 4, @isscalar)
             parse(P,varargin{:})
             
+            % session keys
             sessKey = fetch(pacman.Session & self);
-            
-            for iS = 1:length(sessKey) % loop sessions
+            for iS = 1:length(sessKey)
                 
                 % trial sample frequency
                 tSim = fetchn(pacman.TaskTrials & sessKey(iS), 'simulation_time');

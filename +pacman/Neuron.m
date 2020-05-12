@@ -6,9 +6,38 @@
   neuron_label : enum('good','mua')
 %}
 
-classdef Neuron < dj.Manual
-    methods
-        function importkilosort(self)
+classdef Neuron < dj.Imported
+    properties(Dependent)
+        keySource
+    end
+    methods(Static)
+        function pth = getsortpath(dateStr)
+            pth = sprintf('/Volumes/Churchland-locker/Jumanji/pacman-task/cousteau/processed/%s/kilosort-manually-sorted/%s/',...
+                dateStr, ['pacman-task_c_' '_neu_001']);
+        end 
+    end
+    methods        
+        function source = get.keySource(self)           
+            % check for summary file
+            sourceKeys = fetch(pacman.EmgChannels & 'session_date>="2018-10-02"' & 'session_date<="2018-10-03"');
+            hasSortedData = false(length(sourceKeys),1);
+            for ii = 1:length(sourceKeys)
+                sortPath = sprintf(self.getsortpath(), sourceKeys(ii).session_date);
+                if exist(sortPath,'dir')
+                    if exist([sortPath 'summary.txt'],'file')
+                        hasSortedData(ii) = true;
+                    else
+                        fprintf('%s: missing summary file\n', sourceKeys(ii).session_date);
+                    end
+                else
+                    fprintf('%s: missing myosort directory\n', sourceKeys(ii).session_date);
+                end
+            end
+            source = pacman.EmgChannels & sourceKeys(hasSortedData);
+        end
+    end
+    methods(Access=protected)
+        function makeTuples(self,key)
             PROC_PATH = '/Volumes/Churchland-locker/Jumanji/pacman-task/cousteau/processed/';
             
             % get keys for sessions with neural recordings
@@ -59,6 +88,8 @@ classdef Neuron < dj.Manual
                 end
             end
         end
+    end
+    methods
         % -----------------------------------------------------------------
         % PLOT FIRING RATES
         % -----------------------------------------------------------------

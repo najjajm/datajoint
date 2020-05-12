@@ -21,51 +21,9 @@ classdef TaskTrials < dj.Part
         master = pacman.Task
     end
     methods
-        % convert raw force from volts to Newtons and filter
-        function [forceFilt,keys,forceRaw] = convertforce(self)
-            
-            % gain settings on FUTEK amplifier
-            MAX_FORCE_POUNDS = 5;
-            MAX_FORCE_VOLTS = 5.095;
-            
-            % unit conversion
-            NEWTONS_PER_POUND = 4.44822;
-            
-            % conversion function
-            frcV2N = @(frc,frcMax,frcOff) frcMax*(((MAX_FORCE_POUNDS*NEWTONS_PER_POUND)/frcMax...
-                    * (frc/MAX_FORCE_VOLTS)) - frcOff);
-            
-            keys = fetch(self);
-            
-            if isempty(keys)
-                forceFilt = [];
-                return
-            end
-            
-            [forceFilt,forceRaw] = deal(cell(length(keys),1));
-            for ii = 1:length(keys)
-                
-                FsSg = fetch1(pacman.SpeedgoatRecording & keys(ii),'speedgoat_sample_rate');
-                
-                % fetch alignment indices
-                alignIdx = fetch1(pacman.Sync & keys(ii), 'speedgoat_alignment');
-                
-                % assign aligned raw force to key
-                forceRaw{ii} = fetch1(self & keys(ii), 'force_raw_online');
-                forceRaw{ii} = forceRaw{ii}(alignIdx);
-                
-                % convert raw force to Newtons
-                [forceMax,forceOffset] = fetch1(pacman.TaskConditions & (self & keys(ii)),'force_max','force_offset');
-                forceRaw{ii} = frcV2N(forceRaw{ii},forceMax,forceOffset);
-                
-                % filter force
-                forceFilt{ii} = smooth1D(forceRaw{ii},FsSg,'gau','sd',25e-3);
-            end
-            if length(keys)==1
-                forceRaw = forceRaw{1};
-                forceFilt = forceFilt{1};
-            end
-        end
+        % -----------------------------------------------------------------
+        % PLOT TRIAL COUNTS
+        % -----------------------------------------------------------------
         function plottrialcounts(self)
             keys = fetch(pacman.Session & self);
             n = zeros(length(keys),1);

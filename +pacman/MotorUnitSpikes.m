@@ -1,7 +1,7 @@
 %{
   # trialized and aligned motor unit spikes
   -> pacman.MotorUnitSpikeIndices
-  -> pacman.GoodTrials
+  -> pacman.Sync
   ---
   motor_unit_spikes : longblob # aligned spike raster (logical)
 %}

@@ -1,7 +1,7 @@
 %{
   # trialized and aligned neural spikes
   -> pacman.NeuronSpikeIndices
-  -> pacman.GoodTrials
+  -> pacman.Sync
   ---
   neuron_spikes : longblob # aligned spike raster (logical)
 %}

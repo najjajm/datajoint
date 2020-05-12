@@ -10,8 +10,8 @@ classdef MotorUnit < dj.Imported
         keySource
     end
     methods(Static)
-        function pth = getsortpath(~)
-            pth = '/Volumes/Churchland-locker/Jumanji/pacman-task/cousteau/processed/hpc/%s/myosort-out/';
+        function pth = getsortpath(dateStr)
+            pth = sprintf('/Volumes/Churchland-locker/Jumanji/pacman-task/cousteau/processed/hpc/%s/myosort-out/',dateStr);
         end 
     end
     methods        
@@ -20,7 +20,7 @@ classdef MotorUnit < dj.Imported
             sourceKeys = fetch(pacman.EmgChannels & 'session_date>="2018-10-02"' & 'session_date<="2018-10-03"');
             hasSortedData = false(length(sourceKeys),1);
             for ii = 1:length(sourceKeys)
-                sortPath = sprintf(self.getsortpath(), sourceKeys(ii).session_date);
+                sortPath = self.getsortpath(sourceKeys(ii).session_date);
                 if exist(sortPath,'dir')
                     if exist([sortPath 'summary.txt'],'file')
                         hasSortedData(ii) = true;
@@ -37,7 +37,7 @@ classdef MotorUnit < dj.Imported
     methods(Access=protected)
         function makeTuples(self, key)
             
-            sortPath = sprintf(self.getsortpath(), key.session_date);
+            sortPath = self.getsortpath(key.session_date);
             
             % load data
             load([sortPath 'spikes'],'Spk');
@@ -117,7 +117,7 @@ classdef MotorUnit < dj.Imported
         function rmmyosort(self,sessRel)
             sessKey = fetch(sessRel);
             for iSess = 1:length(sessKey)
-                sortPath = sprintf(self.getsortpath(), sessKey(iSess).session_date); 
+                sortPath = self.getsortpath(sessKey(iSess).session_date); 
                 if exist(sortPath,'dir')
                     delete([sortPath '*']);
                     rmdir(sortPath)
@@ -125,7 +125,7 @@ classdef MotorUnit < dj.Imported
             end            
         end
         function [Spk,Lab,W,Cinv] = loadmyosort(self,sessionDate)
-            sortPath = sprintf(self.getsortpath(), sessionDate);
+            sortPath = self.getsortpath(sessionDate);
             load([sortPath 'spikes'],'Spk');
             load([sortPath 'labels'],'Lab');
             load([sortPath 'templates'],'W');
@@ -161,7 +161,7 @@ classdef MotorUnit < dj.Imported
             Fs = fetch1(pacman.ContinuousRecording & sessKey, 'continuous_sample_rate');
             
             % load templates
-            sortPath = sprintf(self.getsortpath(), sessionDate);
+            sortPath = self.getsortpath(sessionDate);
             load([sortPath 'templates'],'W');
             load([sortPath 'noise_cov'],'Cinv');
             
