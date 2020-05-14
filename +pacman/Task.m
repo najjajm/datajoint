@@ -177,20 +177,21 @@ classdef Task < dj.Imported
        % -----------------------------------------------------------------
         % GET CONDITION/TRIAL KEYS
         % -----------------------------------------------------------------
-        function keys = getkeys(self,varargin)
+        function key = getkey(self,level,varargin)
             iscode = @(x,codes) ischar(x) && ismember(x,codes);
             P = inputParser;
+            addRequired(P, 'level', @(x) iscode(x,{'cond','trial'}))
             addParameter(P, 'block', 1, @(x) isnumeric(x) || (ischar(x) && strcmp(x,'all')))
             addParameter(P, 'cond', 1, @isnumeric)
             addParameter(P, 'condType', 'index', @(x) iscode(x,{'index','rand','first','last','all'}))
             addParameter(P, 'trialSet', 'good', @(x) iscode(x,{'good','bad','all'}))
             addParameter(P, 'trial', 1, @isnumeric)
             addParameter(P, 'trialType', 'index', @(x) iscode(x,{'index','rand','first','last','all'}))
-            parse(P,varargin{:})
+            parse(P,level,varargin{:})
             
             % session keys
             sessKey = fetch(pacman.Session & self);
-            keys = cell(length(sessKey),1);
+            key = cell(length(sessKey),1);
             
             for iSess = 1:length(sessKey)
                 
@@ -206,7 +207,7 @@ classdef Task < dj.Imported
                 end
             
                 % sample conditions
-                condKey = sort(pacman.TaskConditions & self & sessKey(iSess) & blockKey);
+                condKey = sort(pacman.TaskConditions & sessKey(iSess) & (pacman.TaskTrials & blockKey));
                 switch P.Results.condType
                     case 'all'
                         condIdx = 1:length(condKey);
@@ -227,60 +228,67 @@ classdef Task < dj.Imported
                 nCond = length(condKey);
                 
                 % trial keys
-                keys{iSess} = cell(nCond,1);
+                key{iSess} = cell(nCond,1);
                 for iCond = 1:nCond
                     
-                    % restrict by trial set
-                    trialRel = pacman.TaskTrials & blockKey & (pacman.TaskConditions & condKey(iCond));
-                    switch P.Results.trialSet
-                        case 'good'
-                            trialRel = trialRel & pacman.GoodTrials;
-                            
-                        case 'bad'
-                            trialRel = trialRel - pacman.GoodTrials;
-                    end   
+                    % append condition index
+                    condKey(iCond).condition_index = condIdx(iCond);
                     
-                    % sample trials
-                    trialKey = fetch(trialRel);
-                    nTrial = length(trialKey);
-                    switch P.Results.trialType
-                        case 'all'
-                            trialIdx = 1:length(trialKey);
-                            
-                        case 'rand'
-                            trialIdx = datasample(1:nTrial,P.Results.trial,'Replace',false);
-                            
-                        case 'index'
-                            trialIdx = P.Results.trial;
-                            
-                        case 'first'
-                            trialIdx = 1:P.Results.trial;
-                            
-                        case 'last'
-                            trialIdx = (nTrial-(P.Results.trial-1)):nTrial;
-                    end
-                    trialKey = trialKey(trialIdx);
-                    nTrial = length(trialKey);
-                    
-                    % merge condition and trial key data
-                    keys{iSess}{iCond} = repmat(condKey(iCond),nTrial,1);
-                    for iTrial = 1:nTrial
-                        keys{iSess}{iCond}(iTrial).condition_index = condIdx(iCond);
-                        keys{iSess}{iCond}(iTrial).trial_index = trialIdx(iTrial);
+                    if strcmp(level,'cond')
+                        key{iSess}{iCond} = condKey(iCond);
                         
-                        fn = fieldnames(trialKey(iTrial));
-                        for iField = 1:length(fn)
-                            keys{iSess}{iCond}(iTrial).(fn{iField}) = trialKey(iTrial).(fn{iField});
+                    else
+                        % restrict by trial set
+                        trialRel = pacman.TaskTrials & blockKey & (pacman.TaskConditions & condKey(iCond));
+                        switch P.Results.trialSet
+                            case 'good'
+                                trialRel = trialRel & pacman.GoodTrials;
+                                
+                            case 'bad'
+                                trialRel = trialRel - pacman.GoodTrials;
+                        end
+                        
+                        % sample trials
+                        trialKey = fetch(trialRel);
+                        nTrial = length(trialKey);
+                        switch P.Results.trialType
+                            case 'all'
+                                trialIdx = 1:length(trialKey);
+                                
+                            case 'rand'
+                                trialIdx = datasample(1:nTrial,P.Results.trial,'Replace',false);
+                                
+                            case 'index'
+                                trialIdx = P.Results.trial;
+                                
+                            case 'first'
+                                trialIdx = 1:P.Results.trial;
+                                
+                            case 'last'
+                                trialIdx = (nTrial-(P.Results.trial-1)):nTrial;
+                        end
+                        trialKey = trialKey(trialIdx);
+                        nTrial = length(trialKey);
+                        
+                        % merge condition and trial key data
+                        key{iSess}{iCond} = repmat(condKey(iCond),nTrial,1);
+                        for iTrial = 1:nTrial
+                            key{iSess}{iCond}(iTrial).trial_index = trialIdx(iTrial);
+                            
+                            fn = fieldnames(trialKey(iTrial));
+                            for iField = 1:length(fn)
+                                key{iSess}{iCond}(iTrial).(fn{iField}) = trialKey(iTrial).(fn{iField});
+                            end
                         end
                     end
                 end
                 
                 % concatenate keys across conditions
-                keys{iSess} = cat(1,keys{iSess}{:});
+                key{iSess} = cat(1,key{iSess}{:});
             end
             
             % concatenate keys across sessions
-            keys = cat(1,keys{:});
+            key = cat(1,key{:});
         end 
     end
 end

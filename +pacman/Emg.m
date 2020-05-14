@@ -36,124 +36,176 @@ classdef Emg < dj.Imported
                 self.insert(key);
             end
         end
-        function keys = gettrialkeys(self,cond,trial)
-            
-            % condition keys
-            condKey = sort(pacman.TaskConditions & (pacman.TaskTrials & self));
-            if strcmp(cond{1},'all')
-                condIdx = 1:length(condKey);
-            else
-                switch cond{2}
-                    case 'index'
-                        condIdx = cond{1};
-                    case 'first'
-                        condIdx = 1:cond{1};
-                    case 'last'
-                        condIdx = (length(condKey)-(cond{1}-1)):length(condKey);
-                    case 'rand'
-                        condIdx = datasample(1:length(condKey),cond{1},'Replace',false);
-                end
-            end
-            condKey = condKey(condIdx);
-            nCond = length(condKey);
-            
-            keys = cell(nCond,1);
-            
-            for iCond = 1:nCond
-                
-                % trial keys
-                trialKey = fetch(pacman.GoodTrials & (pacman.TaskTrials & (pacman.TaskConditions & condKey(iCond))),'*'); 
-                if strcmp(trial{1},'all')
-                    trialIdx = 1:length(trialKey);
-                else
-                    switch trial{2}
-                        case 'index'
-                            trialIdx = trial{1};
-                        case 'first'
-                            trialIdx = 1:trial{1};
-                        case 'last'
-                            trialIdx = (length(trialKey)-(trial{1}-1)):length(trialKey);
-                        case 'rand'
-                            trialIdx = datasample(1:length(trialKey),trial{1},'Replace',false);
-                    end
-                end
-                trialKey = trialKey(trialIdx);
-                nTrial = length(trialKey);
-                
-                % merge condition and trial key data                
-                keys{iCond} = repmat(condKey(iCond),nTrial,1);
-                for iTrial = 1:nTrial
-                    keys{iCond}(iTrial).condition_index = condIdx(iCond);
-                    
-                    fn = fieldnames(trialKey(iTrial));
-                    for iField = 1:length(fn)
-                        keys{iCond}(iTrial).(fn{iField}) = trialKey(iTrial).(fn{iField});
-                    end
-                end
-            end
-            
-            keys = cat(1,keys{:});
-        end
     end
     methods
-        function plot(self,sessionDate,varargin)
-            validindices = @(x) iscell(x) &&...
-                (strcmp(x{1},'all') || isnumeric(x{1})) &&...
-                ismember(x{2},{'index','first','last','rand'});
+        % -----------------------------------------------------------------
+        % PLOT SINGLE TRIAL EMG
+        % -----------------------------------------------------------------
+        function plot(self,varargin)
+            iscode = @(x,codes) ischar(x) && ismember(x,codes);
             P = inputParser;
-            addRequired(P, 'sessionDate', @ischar)
-            addParameter(P, 'cond', {1,'index'}, @(x) validindices(x))
-            addParameter(P, 'trial', {1,'index'}, @(x) validindices(x))
+            addOptional(P, 'layers', {'filt'}, @(x) iscell(x) && all(ismember(x,{'raw','filt','fit','target','trialForce','meanForce'})))
+            % key selection
+            addParameter(P, 'block', 1, @(x) isnumeric(x) || (ischar(x) && strcmp(x,'all')))
+            addParameter(P, 'cond', 1, @isnumeric)
+            addParameter(P, 'condType', 'index', @(x) iscode(x,{'index','rand','first','last','all'}))
+            addParameter(P, 'trialSet', 'good', @(x) iscode(x,{'good','bad','all'}))
+            addParameter(P, 'trial', 1, @isnumeric)
+            addParameter(P, 'trialType', 'rand', @(x) iscode(x,{'index','rand','first','last','all'}))
+            % EMG parameters
             addParameter(P, 'emg_channel', [], @(x) isempty(x) || isnumeric(x))
+            addParameter(P, 'rect', false, @islogical)
             addParameter(P, 'filtOrd', 2, @isnumeric)
             addParameter(P, 'filtCut', 500, @isnumeric)
-            addParameter(P, 'filtType', 'high', @(x) ischar(x) && ismember(x,{'low','high','bandpass'}))
-            addParameter(P, 'group', [], @ischar)
-            addParameter(P, 'showTrialforce', false, @islogical)
-            addParameter(P, 'showMeanforce', false, @islogical)
-            parse(P,sessionDate,varargin{:})
+            addParameter(P, 'filtType', 'high', @(x) ischar(x) && ismember(x,{'low','high','bandpass','gau'}))
+            addParameter(P, 'filtSD', 25e-3, @isnumeric)
+            % figure setup
+            addParameter(P, 'fig', 'figure', @(x) iscode(x,{'figure','clf'}))
+            addParameter(P, 'groupby', 'trial', @(x) iscode(x,{'trial','cond'}))
+            parse(P,varargin{:})
             
-            sessKey = struct('session_date',sessionDate);
-            
-            % get trial keys
-            trialKeys = gettrialkeys(self & sessKey, P.Results.cond, P.Results.trial);
-            nTrial = length(trialKeys);
-            
-            for iTrial = 1:nTrial
+            % session keys
+            sessKey = fetch(pacman.Session & self);
+            for iSe = 1:length(sessKey)
                 
-                rel = self & ((pacman.GoodTrials * pacman.TaskTrials & sessKey) & trialKeys(iTrial));
+                % condition keys
+                condKey = getkey(pacman.Task & sessKey(iSe),'cond','block',P.Results.block,...
+                    'cond',P.Results.cond,'condType',P.Results.condType);
+                nCond = length(condKey);
                 
-                % restrict channels
-                if ~isempty(P.Results.emg_channel)
-                    chanKey = cell2struct(num2cell(P.Results.emg_channel),'emg_channel');
-                    rel = rel & chanKey;
+                % Speedgoat and continuous acquisition sample rates
+                tSim = fetchn(pacman.TaskTrials & sessKey(iSe), 'simulation_time');
+                FsSg = mode(round(1./diff(tSim{1})));
+                FsCont = fetch1(pacman.ContinuousRecording & sessKey(iSe),'continuous_sample_rate');               
+                
+                for iCo = 1:nCond
+                    
+                    if ismember('target',P.Results.layers)
+                        [tSg,targFrc] = maketarget(pacman.TaskConditions & condKey(iCo),FsSg);
+                    end
+                    
+                    % continuous trial time
+                    tCont = maketarget(pacman.TaskConditions & condKey(iCo),FsCont);
+                    
+                    % fetch raw data
+                    trialKey = getkey(pacman.Task & sessKey(iSe),'trial',...
+                        'block',P.Results.block,...
+                        'cond',condKey(iCo).condition_index,'condType','index',...
+                        'trial',P.Results.trial,'trialType',P.Results.trialType,'trialSet',P.Results.trialSet);
+                    nTrial = length(trialKey);
+                    
+                    for iTr = 1:nTrial
+                        
+                        % data rel
+                        emgRel = self & trialKey(iTr);
+                        if ~isempty(P.Results.emg_channel)
+                            chanKey = cell2struct(num2cell(P.Results.emg_channel),'emg_channel');
+                            emgRel = emgRel & chanKey;
+                        else
+                            chanKey = cell2struct(num2cell(fetchn(emgRel,'emg_channel'))','emg_channel');
+                        end
+                        nChan = count(emgRel);
+                        
+                        % motor unit rel
+                        if ismember('fit',P.Results.layers)
+                            muRel = pacman.MotorUnit & sessKey(iSe);
+                            muKey = cell2struct(num2cell(fetchn(muRel,'motor_unit_id'))','motor_unit_id');
+                            nUnit = count(muRel);
+                            cmap = getcolormap(muRel);
+                        else
+                            nUnit = 0;
+                        end
+                        
+                        % setup figure
+                        figure
+                        ax = [];
+                        if any(ismember({'target','trialForce','trialMean'},P.Results.layers))
+                            nRow = 1+nChan;
+                            ax(1) = subplot(nRow,1,1);
+                            hold on
+                            rowOffset = 1;
+                        else
+                            nRow = nChan;
+                            rowOffset = 0;
+                        end
+                        
+                        % plot force and/or target
+                        if ismember('trialForce',P.Results.layers)
+                            X = cell2mat(fetch1(pacman.Force & trialKey(iTr),'force_filt'));
+                            plot(tSg,X','color',0.8*ones(1,3))
+                        end
+                        if ismember('trialMean',P.Results.layers)
+                            X = cell2mat(fetchn(pacman.Force & (pacman.TaskTrials & condKey(iCo)),'force_filt'));
+                            plot(tSg,mean(X,1),'k','LineWidth',2)
+                        end
+                        if ismember('target',P.Results.layers)
+                            plot(tSg,targFrc,'c--','LineWidth',2)
+                        end
+                        
+                        for iCh = 1:nChan
+                            
+                            ax(iCh+rowOffset) = subplot(nRow,1,iCh+rowOffset);
+                            hold on
+                            
+                            % fetch raw data
+                            X = double(fetch1(emgRel & chanKey(iCh), 'emg_channel_data'));
+                            
+                            % rectify
+                            if P.Results.rect
+                                X = abs(X);
+                            end
+                            
+                            % filter
+                            if ismember('filt',P.Results.layers)
+                                if any(ismember({'low','high','bandpass'},P.Results.filtType))
+                                    [b,a] = butter(P.Results.filtOrd, P.Results.filtCut/(FsCont/2), P.Results.filtType);
+                                    X = filtfilt(b,a,double(X));
+                                else
+                                    X = smooth1D(X,FsCont,'gau','sd',P.Results.filtSD,'dim',2);
+                                end
+                            end
+                        
+                            % plot data
+                            plot(tCont,X,'k')
+                            
+                            fh = [];
+                            for iUn = 1:nUnit
+                                
+                                % fetch spikes
+                                s = fetch1(pacman.MotorUnitSpikes & trialKey(iTr) & muKey(iUn),'motor_unit_spikes');
+                                if nnz(s) > 0
+                                    
+                                    % fetch channel template
+                                    w = fetch1(pacman.MotorUnitTemplate & muKey(iUn) & chanKey(iCh),'motor_unit_waveform');
+                                    
+                                    % overlay fit
+                                    waveLen = length(w);
+                                    spkIdx = find(s);
+                                    spkIdx(spkIdx<waveLen | spkIdx>length(s)-waveLen) = [];
+                                    sFrame = -waveLen/4:waveLen/4-1;
+                                    wFrame = sFrame+1+waveLen/2;
+                                    txtPos = 1.15*max(w);
+                                    for iSp = 1:length(spkIdx)
+                                        fh(iUn) = plot(tCont(sFrame+spkIdx(iSp)),w(wFrame),'color',cmap(iUn,:),'linewidth',2);
+                                        text(tCont(spkIdx(iSp)),txtPos,num2str(iUn),'HorizontalAlignment','center','FontSize',10,'color',cmap(iUn,:))
+                                    end
+                                end
+                            end
+                            
+                            title(sprintf('channel %i',chanKey(iCh).emg_channel))
+                            box off
+                            drawnow
+                        end
+                        linkaxes(ax,'x')
+                        set(gcf,'Name',sprintf('EMG. %s. Condition %i. Trial %i',...
+                            sessKey(iSe).session_date,condKey(iCo).condition_index,trialKey(iTr).trial_index))
+                    end
                 end
-                
-                % fetch trial data
-                key = fetchdata(rel,...
-                    'filtOrd',P.Results.filtOrd,...
-                    'filtCut',P.Results.filtCut,...
-                    'filtType',P.Results.filtType);
-                
-                % plot channel data
-                figure
-                ax = [];
-                for ii = 1:length(key)
-                    ax(ii) = subplot(length(key),1,ii);
-                    
-                    FsCont = fetch1(pacman.ContinuousRecording & key(ii),'continuous_sample_rate');
-                    t = maketarget(pacman.TaskConditions & (pacman.TaskTrials & key(ii)), FsCont);
-                    
-                    plot(t,key(ii).emg_data,'k')
-                    
-                    title(sprintf('channel %i',key(ii).emg_channel))
-                    box off
-                end
-                linkaxes(ax,'x')
-                set(gcf,'Name',sprintf('EMG. %s. Condition %i. Trial %i',...
-                    sessKey.session_date,trialKeys(iTrial).condition_index,trialKeys(iTrial).trial_index)) 
             end
         end
+        % -----------------------------------------------------------------
+        % PLOT SPIKE RASTERS
+        % -----------------------------------------------------------------
         function plotfit(self,sessionDate,varargin)
             P = inputParser;
             addParameter(P,'chan',[],@(x) isempty(x) || isnumeric(x))

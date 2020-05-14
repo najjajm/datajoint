@@ -44,28 +44,28 @@ classdef Force < dj.Computed
     end
     methods
         function plot(self,varargin)
+            iscode = @(x,codes) ischar(x) && ismember(x,codes);
             P = inputParser;
-            addParameter(P, 'mean', true, @islogical)
-            addParameter(P, 'sem', false, @islogical)
-            addParameter(P, 'target', false, @islogical)
+            addOptional(P, 'layers', {'trials','mean','count'}, @(x) iscell(x) && all(ismember(x,{'trials','mean','sem','target','count'})))
+            % key selection
+            addParameter(P, 'block', 'all', @(x) isnumeric(x) || (ischar(x) && strcmp(x,'all')))
+            addParameter(P, 'cond', 1, @isnumeric)
+            addParameter(P, 'condType', 'all', @(x) iscode(x,{'index','rand','first','last','all'}))
+            addParameter(P, 'trialSet', 'good', @(x) iscode(x,{'good','bad','all'}))
+            addParameter(P, 'trial', 1, @isnumeric)
+            addParameter(P, 'trialType', 'all', @(x) iscode(x,{'index','rand','first','last','all'}))
+            % figure setup
             addParameter(P, 'fig', 'figure', @(x) ischar(x) && ismember(x,{'figure','clf'}))
-            addParameter(P, 'showCount', true, @islogical)
             addParameter(P, 'yInt', 4, @isscalar)
             parse(P,varargin{:})
             
             % session keys
             sessKey = fetch(pacman.Session & self);
-            for iS = 1:length(sessKey)
+            for iSe = 1:length(sessKey)
                 
-                % trial sample frequency
-                tSim = fetchn(pacman.TaskTrials & sessKey(iS), 'simulation_time');
-                FsSG = mode(round(1./diff(tSim{1})));
-                
-                % target condition table
-                rel = pacman.TaskConditions & (self * pacman.TaskTrials & sessKey(iS));
-                
-                % get condition keys
-                condKey = sort(rel);
+                % condition keys
+                condKey = getkey(pacman.Task & sessKey(iSe),'cond','block',P.Results.block,...
+                    'cond',P.Results.cond,'condType',P.Results.condType);
                 nCond = length(condKey);
                 
                 % subplot settings
@@ -73,44 +73,60 @@ classdef Force < dj.Computed
                 nCol = ceil(sqrt(nCond));
                 nRow = ceil(nCond/nCol);
                 
+                % trial sample frequency
+                tSim = fetchn(pacman.TaskTrials & sessKey(iSe), 'simulation_time');
+                FsSG = mode(round(1./diff(tSim{1})));
+                
                 % force range
-                X = fetchn(self & sessKey(iS),'force_filt');
+                X = fetchn(self & sessKey(iSe),'force_filt');
                 frcMax = max(cellfun(@max,X));
                 forceRange = [-P.Results.yInt, P.Results.yInt+(frcMax-rem(frcMax,P.Results.yInt))];
                 
-                for jC = 1:nCond % loop conditions
-                    subplot(nRow,nCol,jC)
+                for iCo = 1:nCond
+                    
+                    subplot(nRow,nCol,iCo)
                     hold on
-                    [t,targFrc] = maketarget(rel & condKey(jC),FsSG);
-                    X = cell2mat(fetchn((self & sessKey(iS)) * pacman.TaskTrials & condKey(jC),'force_filt'));
-                    if P.Results.trials
-                        plot(t,X','color',0.8*ones(1,3));
+                    
+                    % get time vector and target force profile
+                    [t,targFrc] = maketarget(pacman.TaskConditions & condKey(iCo),FsSG);
+                    
+                    % fetch forces from good trials
+                    trialKey = getkey(pacman.Task & sessKey(iSe),'trial',...
+                        'block',P.Results.block,...
+                        'cond',condKey(iCo).condition_index,'condType','index',...
+                        'trial',P.Results.trial,'trialType',P.Results.trialType,'trialSet',P.Results.trialSet);
+                    X = cell2mat(fetchn(((self & sessKey(iSe)) * pacman.TaskTrials) & trialKey,'force_filt'));
+
+                    if ~isempty(X)
+                        if ismember('trials',P.Results.layers)
+                            plot(t,X','color',0.8*ones(1,3));
+                        end
+                        if ismember('sem',P.Results.layers)
+                            mu = mean(X,1);
+                            ste = std(X,[],1)/sqrt(max(1,size(X,1)-1));
+                            plot(t,mu-ste,'r--')
+                            plot(t,mu+ste,'r--')
+                        end
+                        if ismember('mean',P.Results.layers)
+                            plot(t,mean(X,1),'k','LineWidth',2)
+                        end
                     end
-                    if P.Results.sem
-                        mu = mean(X,1);
-                        ste = std(X,[],1)/sqrt(max(1,size(X,1)-1));
-                        plot(t,mu-ste,'r--')
-                        plot(t,mu+ste,'r--')
-                    end
-                    if P.Results.mean
-                        plot(t,mean(X,1),'k','LineWidth',2)
-                    end
-                    if P.Results.target
+                    if ismember('target',P.Results.layers)
                         plot(t,targFrc,'c--','linewidth',2)
                     end
-                    if P.Results.showCount
+                    if ismember('count',P.Results.layers)
                        text(t(1)+0.025*range(t), mean([forceRange(1),0]), sprintf('n = %i',size(X,1)))
                     end
                     plot(t([1 end]),[0 0],'color',.8*[1 1 1])
-                    title(sprintf('condition %i\n(ID: %i)',jC,condKey(jC).targ_id))
+                    title(sprintf('condition %i\n(ID: %i)',iCo,condKey(iCo).targ_id))
                     xlim(t([1 end]))
                     ylim(forceRange);
                     box off
                     drawnow
                 end
                 subplot(nRow,nCol,1+(nRow-1)*nCol);
-                pacman.Session.stampfig(sessKey(iS).session_date);
-                set(gcf,'Name',['Forces (' sessKey(iS).session_date ')'])
+                pacman.Session.stampfig(sessKey(iSe).session_date);
+                set(gcf,'Name',['Forces (' sessKey(iSe).session_date ')'])
             end
         end
         
